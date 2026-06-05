@@ -1,0 +1,6 @@
+{
+  "name": "chess",
+  "description": "A clean, responsive online chess game.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
