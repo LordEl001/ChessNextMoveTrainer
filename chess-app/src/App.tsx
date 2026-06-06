@@ -27,6 +27,11 @@ import { getComputerMove } from './utils/chessAI';
 export let gamePredictionData: PredictionRecord[] = [];
 
 /**
+ * Global variable for training color in Pass & Play mode.
+ */
+export let trainingColor: 'white' | 'black' = 'white';
+
+/**
  * Evaluates the user's prediction compared to the actual played computer move.
  * Returns the earned points according to the weighted scoring system:
  * - Exact Match: +1.0 Point
@@ -75,6 +80,16 @@ export default function App() {
     actualFrom: string;
     actualTo: string;
   } | null>(null);
+
+  // 1c. Pass & Play Prediction State
+  const [whitePredictionData, setWhitePredictionData] = useState<PredictionRecord[]>([]);
+  const [blackPredictionData, setBlackPredictionData] = useState<PredictionRecord[]>([]);
+  const [trainingColorState, setTrainingColorState] = useState<'white' | 'black'>('white');
+
+  // Handshake to keep global trainingColor value in sync
+  useEffect(() => {
+    trainingColor = trainingColorState;
+  }, [trainingColorState]);
 
   // Handshake to keep the global array in sync with dynamic react state
   useEffect(() => {
@@ -265,6 +280,49 @@ export default function App() {
       const moveResult = tempGame.move({ from, to, promotion });
       if (!moveResult) return;
 
+      // Evaluate predictions BEFORE updating moveHistory or game state
+      if (gameMode === 'pass-and-play') {
+        const currentTurn = game.turn(); // 'w' or 'b'
+        const isWhitePredictingThisMove = trainingColorState === 'white' && currentTurn === 'b';
+        const isBlackPredictingThisMove = trainingColorState === 'black' && currentTurn === 'w' && moveHistory.length > 0;
+
+        if ((isWhitePredictingThisMove || isBlackPredictingThisMove) && predictedFrom && predictedTo) {
+          const score = evaluatePrediction({ from: predictedFrom, to: predictedTo }, { from, to });
+          const predictorColor = trainingColorState;
+
+          let matchType: 'exact' | 'partial-start' | 'partial-end' | 'miss' = 'miss';
+          if (score === 1.0) {
+            matchType = 'exact';
+          } else if (score === 0.4 && predictedFrom === from) {
+            matchType = 'partial-start';
+          } else if (score === 0.4 && predictedTo === to) {
+            matchType = 'partial-end';
+          }
+
+          const newRecord: PredictionRecord = {
+            moveNumber: Math.ceil((moveHistory.length + 1) / 2),
+            predictedMove: { from: predictedFrom, to: predictedTo },
+            actualMove: { from, to },
+            scoreEarned: score,
+          };
+
+          if (predictorColor === 'white') {
+            setWhitePredictionData((prev) => [...prev, newRecord]);
+          } else {
+            setBlackPredictionData((prev) => [...prev, newRecord]);
+          }
+
+          setLastPredictionResult({
+            scoreEarned: score,
+            matchType,
+            predictedFrom,
+            predictedTo,
+            actualFrom: from,
+            actualTo: to,
+          });
+        }
+      }
+
       // Sfx trigger
       if (tempGame.inCheck()) {
         playSound('check');
@@ -308,6 +366,26 @@ export default function App() {
         setPredictedTo(null);
         setHasPredictedThisTurn(false);
         setLastPredictionResult(null);
+      }
+
+      // Automatically trigger Prediction mode for opponent in Pass & Play if game isn't over
+      if (gameMode === 'pass-and-play' && !tempGame.isGameOver()) {
+        const nextTurn = tempGame.turn(); // 'w' or 'b'
+        const shouldPredict = (trainingColorState === 'white' && nextTurn === 'b') ||
+                              (trainingColorState === 'black' && nextTurn === 'w');
+
+        if (shouldPredict) {
+          setIsPredictionMode(true);
+          setPredictedFrom(null);
+          setPredictedTo(null);
+          setHasPredictedThisTurn(false);
+          setLastPredictionResult(null);
+        } else {
+          setIsPredictionMode(false);
+          setPredictedFrom(null);
+          setPredictedTo(null);
+          setHasPredictedThisTurn(false);
+        }
       }
     } catch (err) {
       // Invalid move caught gracefully
@@ -419,7 +497,17 @@ export default function App() {
     setPredictedTo(null);
     setHasPredictedThisTurn(false);
     setLastPredictionResult(null);
-    setPredictionRecords((prev) => prev.slice(0, prev.length - 1));
+
+    if (gameMode === 'vs-computer') {
+      setPredictionRecords((prev) => prev.slice(0, prev.length - 1));
+    } else {
+      const lastMoveColor = moveHistory[moveHistory.length - 1]?.color;
+      if (lastMoveColor === 'w') {
+        setBlackPredictionData((prev) => prev.slice(0, prev.length - 1));
+      } else if (lastMoveColor === 'b') {
+        setWhitePredictionData((prev) => prev.slice(0, prev.length - 1));
+      }
+    }
 
     const tempGame = new Chess();
 
@@ -483,6 +571,8 @@ export default function App() {
     setHasPredictedThisTurn(false);
     setLastPredictionResult(null);
     setPredictionRecords([]);
+    setWhitePredictionData([]);
+    setBlackPredictionData([]);
 
     if (clockSetting !== null) {
       const secs = clockSetting * 60;
@@ -493,6 +583,14 @@ export default function App() {
     setShowExitConfirm(false);
     setShowGameOverModal(false);
     playSound('move');
+  };
+
+  const handleGameModeChange = (newMode: GameMode) => {
+    if (newMode !== gameMode) {
+      setGameMode(newMode);
+      // Reset the match when switching game modes
+      handleResetMatch(true);
+    }
   };
 
   const handleLoadFEN = (fen: string): boolean => {
@@ -598,6 +696,30 @@ export default function App() {
     feedbackPhraseSum = "Excellent grandmaster-level anticipation!";
   }
 
+  // Predictor names helper for Pass & Play Mode
+  const pPlayerPredicting = game.turn() === 'b' ? 'White' : 'Black';
+  const pPlayerOpponent = game.turn() === 'b' ? 'Black' : 'White';
+  
+  // Last predictor names helper (for evaluated state)
+  const lastPredictorName = activeTurn === 'w' ? 'White' : 'Black';
+  const lastOpponentName = activeTurn === 'w' ? 'Black' : 'White';
+
+  // Stats for White (predicting Black's moves)
+  const whiteTotalPreds = whitePredictionData.length;
+  const whiteTotalPoints = whitePredictionData.reduce((sum, rec) => sum + rec.scoreEarned, 0);
+  const whiteExactMatches = whitePredictionData.filter(rec => rec.scoreEarned === 1.0).length;
+  const whitePartialMatches = whitePredictionData.filter(rec => rec.scoreEarned === 0.4).length;
+  const whiteMisses = whitePredictionData.filter(rec => rec.scoreEarned === 0).length;
+  const whiteScorePercentage = whiteTotalPreds > 0 ? Math.round((whiteTotalPoints / whiteTotalPreds) * 100) : 0;
+
+  // Stats for Black (predicting White's moves)
+  const blackTotalPreds = blackPredictionData.length;
+  const blackTotalPoints = blackPredictionData.reduce((sum, rec) => sum + rec.scoreEarned, 0);
+  const blackExactMatches = blackPredictionData.filter(rec => rec.scoreEarned === 1.0).length;
+  const blackPartialMatches = blackPredictionData.filter(rec => rec.scoreEarned === 0.4).length;
+  const blackMisses = blackPredictionData.filter(rec => rec.scoreEarned === 0).length;
+  const blackScorePercentage = blackTotalPreds > 0 ? Math.round((blackTotalPoints / blackTotalPreds) * 100) : 0;
+
   return (
     <div className="min-h-screen bg-natural-bg text-natural-text flex flex-col font-sans transition-colors duration-200">
       {/* Premium Theme Layout Header */}
@@ -665,8 +787,8 @@ export default function App() {
               lastMove={lastMove}
               interactive={currentMoveIndex === -1 && !game.isGameOver() && !flaggedWinner && !resignedWinner && !isThinking && (gameMode !== 'vs-computer' || game.turn() === 'w')}
               isPredictionMode={isPredictionMode}
-              predictedFromSquare={predictedFrom}
-              predictedToSquare={predictedTo}
+              predictedFromSquare={isPredictionMode ? predictedFrom : null}
+              predictedToSquare={isPredictionMode ? predictedTo : null}
               onPredictionSquareClick={handlePredictionSquareClick}
             />
 
@@ -679,9 +801,7 @@ export default function App() {
                 </div>
               </div>
             )}
-          </div>
-
-          {/* Prediction Mode Panel (rendered outside Chessboard to never overlap) */}
+          </div>          {/* Prediction Mode Panel (rendered outside Chessboard to never overlap) */}
           {isPredictionMode && (
             <div id="prediction-panel" className="w-full bg-white border border-stone-200 rounded-xl shadow-md p-4 flex flex-col sm:flex-row items-center justify-between gap-3 animate-fade-in pointer-events-auto">
               <div className="flex items-center gap-3">
@@ -689,16 +809,29 @@ export default function App() {
                   🔮
                 </div>
                 <div className="text-left">
-                  <h4 className="text-xs md:text-sm font-serif italic text-stone-800 font-bold">Prediction Phase</h4>
+                  <h4 className="text-xs md:text-sm font-serif italic text-stone-800 font-bold">
+                    {gameMode === 'pass-and-play' 
+                      ? `${pPlayerPredicting}, predict ${pPlayerOpponent}'s next move!` 
+                      : 'Prediction Phase'
+                    }
+                  </h4>
                   <p className="text-[10px] md:text-xs text-stone-500 leading-tight">
-                    Where do you think your opponent will play next? Tap the starting square, then the destination square on the board.
+                    {gameMode === 'pass-and-play'
+                      ? `Click two squares to indicate your secret prediction. Highlights clear once confirmed.`
+                      : 'Where do you think your opponent will play next? Tap the starting square, then the destination square on the board.'
+                    }
                   </p>
                 </div>
               </div>
               
               <div className="flex items-center gap-3 shrink-0">
                 <div className="flex flex-col items-center">
-                  <span className="text-[10px] uppercase font-bold text-stone-400 font-mono tracking-wider">Your Guess</span>
+                  <span className="text-[10px] uppercase font-bold text-stone-400 font-mono tracking-wider">
+                    {gameMode === 'pass-and-play'
+                      ? `${pPlayerPredicting}'s Guess`
+                      : 'Your Guess'
+                    }
+                  </span>
                   <span className="text-xs font-mono font-bold text-stone-700 bg-stone-100 border border-stone-200 px-2.5 py-0.5 rounded mt-0.5 min-w-[70px] text-center">
                     {predictedFrom ? predictedFrom.toUpperCase() : '__'} ➔ {predictedTo ? predictedTo.toUpperCase() : '__'}
                   </span>
@@ -750,12 +883,19 @@ export default function App() {
                     }
                   </h4>
                   <p className="text-[10px] md:text-xs text-stone-505 mt-0.5 leading-snug">
-                    {lastPredictionResult.scoreEarned === 1.0 
-                      ? `Magnificent accuracy! You predicted the computer's exact play of ${lastPredictionResult.actualFrom.toUpperCase()} ➔ ${lastPredictionResult.actualTo.toUpperCase()}!`
-                      : lastPredictionResult.scoreEarned === 0.4
-                        ? `Partial Credit! Predicted ${lastPredictionResult.predictedFrom.toUpperCase()} ➔ ${lastPredictionResult.predictedTo.toUpperCase()}, computer selected ${lastPredictionResult.actualFrom.toUpperCase()} ➔ ${lastPredictionResult.actualTo.toUpperCase()}.`
-                        : `Predicted ${lastPredictionResult.predictedFrom.toUpperCase()} ➔ ${lastPredictionResult.predictedTo.toUpperCase()}, but opponent played ${lastPredictionResult.actualFrom.toUpperCase()} ➔ ${lastPredictionResult.actualTo.toUpperCase()}.`
-                    }
+                    {gameMode === 'pass-and-play' ? (
+                      lastPredictionResult.scoreEarned === 1.0
+                        ? `${lastPredictorName} predicted ${lastOpponentName}'s exact play of ${lastPredictionResult.actualFrom.toUpperCase()} ➔ ${lastPredictionResult.actualTo.toUpperCase()}!`
+                        : lastPredictionResult.scoreEarned === 0.4
+                          ? `Partial Credit! ${lastPredictorName} predicted ${lastPredictionResult.predictedFrom.toUpperCase()} ➔ ${lastPredictionResult.predictedTo.toUpperCase()}, ${lastOpponentName} selected ${lastPredictionResult.actualFrom.toUpperCase()} ➔ ${lastPredictionResult.actualTo.toUpperCase()}.`
+                          : `${lastPredictorName} predicted ${lastPredictionResult.predictedFrom.toUpperCase()} ➔ ${lastPredictionResult.predictedTo.toUpperCase()}, but ${lastOpponentName} played ${lastPredictionResult.actualFrom.toUpperCase()} ➔ ${lastPredictionResult.actualTo.toUpperCase()}.`
+                    ) : (
+                      lastPredictionResult.scoreEarned === 1.0 
+                        ? `Magnificent accuracy! You predicted the computer's exact play of ${lastPredictionResult.actualFrom.toUpperCase()} ➔ ${lastPredictionResult.actualTo.toUpperCase()}!`
+                        : lastPredictionResult.scoreEarned === 0.4
+                          ? `Partial Credit! Predicted ${lastPredictionResult.predictedFrom.toUpperCase()} ➔ ${lastPredictionResult.predictedTo.toUpperCase()}, computer selected ${lastPredictionResult.actualFrom.toUpperCase()} ➔ ${lastPredictionResult.actualTo.toUpperCase()}.`
+                          : `Predicted ${lastPredictionResult.predictedFrom.toUpperCase()} ➔ ${lastPredictionResult.predictedTo.toUpperCase()}, but opponent played ${lastPredictionResult.actualFrom.toUpperCase()} ➔ ${lastPredictionResult.actualTo.toUpperCase()}.`
+                    )}
                   </p>
                 </div>
               </div>
@@ -796,7 +936,7 @@ export default function App() {
             currentMoveIndex={currentMoveIndex}
             onSelectMoveIndex={setCurrentMoveIndex}
             gameMode={gameMode}
-            onSetGameMode={setGameMode}
+            onSetGameMode={handleGameModeChange}
             aiDifficulty={aiDifficulty}
             onSetAiDifficulty={setAiDifficulty}
             boardTheme={boardTheme}
@@ -810,10 +950,18 @@ export default function App() {
             gameStatus={gameStatus}
             gameWinner={gameWinner}
             hasTimer={clockSetting !== null}
-            predictionRecords={predictionRecords}
+            predictionRecords={
+              gameMode === 'vs-computer'
+                ? predictionRecords
+                : trainingColorState === 'white'
+                  ? whitePredictionData
+                  : blackPredictionData
+            }
             onShowSummary={() => setShowGameOverModal(true)}
             isGameActive={!game.isGameOver() && !flaggedWinner && !resignedWinner}
             onResign={() => setShowResignConfirm(true)}
+            trainingColor={trainingColorState}
+            onSetTrainingColor={setTrainingColorState}
           />
         </div>
       </div>
@@ -880,7 +1028,7 @@ export default function App() {
       {/* Game Over Performance Summary Dashboard Modal Overlay */}
       {showGameOverModal && (
         <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 animate-fade-in">
-          <div className="bg-white border border-stone-200 rounded-3xl p-8 shadow-2xl max-w-md w-full relative text-center">
+          <div className="bg-white border border-stone-200 rounded-3xl p-6 md:p-8 shadow-2xl relative text-center w-full transition-all duration-300 max-w-md">
             {/* Medal graphic adornment */}
             <div className="w-16 h-16 bg-gradient-to-tr from-sky-100 to-sky-50 rounded-full flex items-center justify-center mx-auto mb-4 border border-sky-100/60 shadow-inner">
               <span className="text-3xl">🏆</span>
@@ -888,91 +1036,194 @@ export default function App() {
             
             <h3 className="text-stone-850 text-xl font-serif italic font-bold mb-1">Match Concluded!</h3>
             <p className="text-stone-500 text-xs mb-6 px-4">
-              Thank you for playing. Here is your prediction scorecard analysis for the computer moves.
+              {gameMode === 'pass-and-play'
+                ? "Here is the prediction scorecard analysis for the designated training player."
+                : "Thank you for playing. Here is your prediction scorecard analysis for the computer moves."}
             </p>
 
-            {totalPredictionsSum === 0 ? (
-              <div className="py-6 border border-dashed border-stone-200 rounded-2xl mb-6 bg-stone-50/50">
-                <span className="text-3xl block mb-2">♟️</span>
-                <h4 className="text-xs font-serif font-bold text-stone-700">No predictions recorded this game</h4>
-                <p className="text-[10px] text-stone-500 max-w-[240px] mx-auto mt-1 leading-normal">
-                  Toggle <strong className="text-stone-600">Vs-Computer</strong> mode during your next match and tap anticipated moves in real-time to track metrics!
-                </p>
+            {gameMode === 'pass-and-play' ? (
+              // Designated training player prediction score for Pass & Play
+              <div>
+                {(trainingColorState === 'white' ? whiteTotalPreds : blackTotalPreds) === 0 ? (
+                  <div className="py-8 border border-dashed border-stone-200 rounded-2xl mb-6 bg-stone-50/50">
+                    <span className="text-3xl block mb-2">♟️</span>
+                    <h4 className="text-xs font-serif font-bold text-stone-700">No predictions recorded this game</h4>
+                    <p className="text-[10px] text-stone-505 max-w-[280px] mx-auto mt-1 leading-normal">
+                      Make sure to complete prediction phases during transitions to see your training scorecard!
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div className="mb-6">
+                      {trainingColorState === 'white' ? (
+                        /* White's Scorecard */
+                        <div className="p-4 rounded-2xl border transition-all bg-amber-50/40 border-amber-200 shadow-xs">
+                          <div className="flex items-center justify-between mb-3">
+                            <span className="text-xs font-serif font-bold text-stone-700">🤍 Trainer (White)</span>
+                            <span className="text-[9px] font-bold bg-amber-100 text-amber-800 border border-amber-200 px-1.5 py-0.5 rounded uppercase font-mono tracking-wider">
+                              Active Trainer
+                            </span>
+                          </div>
+                          
+                          <div className="text-center mb-3">
+                            <span className="text-2xl md:text-3xl font-serif font-bold text-stone-800">{whiteScorePercentage}%</span>
+                            <span className="text-[9px] font-mono tracking-wider font-bold text-stone-400 uppercase block mt-0.5">Prediction Accuracy</span>
+                          </div>
+
+                          <div className="bg-white border border-stone-150 rounded-xl py-1 px-2.5 text-[11px] text-stone-500 font-mono inline-block mb-3">
+                            Score: <span className="font-bold text-stone-700">{whiteTotalPoints.toFixed(1)} / {whiteTotalPreds}</span>
+                          </div>
+
+                          <div className="space-y-1.5 text-left text-xs text-stone-600 bg-white/60 p-2.5 rounded-lg border border-stone-100">
+                            <div className="flex justify-between">
+                              <span>Exact Predictions:</span>
+                              <span className="font-bold text-emerald-600 font-mono">{whiteExactMatches}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Partial Predictions:</span>
+                              <span className="font-bold text-sky-600 font-mono">{whitePartialMatches}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Missed Attempts:</span>
+                              <span className="font-bold text-stone-500 font-mono">{whiteMisses}</span>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        /* Black's Scorecard */
+                        <div className="p-4 rounded-2xl border transition-all bg-amber-50/40 border-amber-200 shadow-xs">
+                          <div className="flex items-center justify-between mb-3">
+                            <span className="text-xs font-serif font-bold text-stone-700">🖤 Trainer (Black)</span>
+                            <span className="text-[9px] font-bold bg-amber-100 text-amber-800 border border-amber-200 px-1.5 py-0.5 rounded uppercase font-mono tracking-wider">
+                              Active Trainer
+                            </span>
+                          </div>
+                          
+                          <div className="text-center mb-3">
+                            <span className="text-2xl md:text-3xl font-serif font-bold text-stone-800">{blackScorePercentage}%</span>
+                            <span className="text-[9px] font-mono tracking-wider font-bold text-stone-400 uppercase block mt-0.5">Prediction Accuracy</span>
+                          </div>
+
+                          <div className="bg-white border border-stone-150 rounded-xl py-1 px-2.5 text-[11px] text-stone-500 font-mono inline-block mb-3">
+                            Score: <span className="font-bold text-stone-700">{blackTotalPoints.toFixed(1)} / {blackTotalPreds}</span>
+                          </div>
+
+                          <div className="space-y-1.5 text-left text-xs text-stone-600 bg-white/60 p-2.5 rounded-lg border border-stone-100">
+                            <div className="flex justify-between">
+                              <span>Exact Predictions:</span>
+                              <span className="font-bold text-emerald-600 font-mono">{blackExactMatches}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Partial Predictions:</span>
+                              <span className="font-bold text-sky-600 font-mono">{blackPartialMatches}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Missed Attempts:</span>
+                              <span className="font-bold text-stone-500 font-mono">{blackMisses}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Fun prediction duel results statement */}
+                    <div className="bg-sky-50/50 border border-sky-100/60 rounded-2xl p-4 mb-6">
+                      <p className="text-xs text-sky-900 leading-snug font-sans font-medium italic">
+                        {(trainingColorState === 'white' ? whiteScorePercentage : blackScorePercentage) > 50
+                          ? `Incredible! As the training player, you anticipated moves like a seasoned Grandmaster!`
+                          : `Solid effort! Keep practicing in Training mode to sharpen your tactical forecasting.`}
+                      </p>
+                    </div>
+                  </>
+                )}
               </div>
             ) : (
+              // Original Computer AI single player stats
               <>
-                {/* SVG Circular Progress Ring */}
-                <div className="relative w-40 h-40 mx-auto mb-6 flex items-center justify-center">
-                  <svg className="w-full h-full transform -rotate-90">
-                    {/* Background circle */}
-                    <circle
-                      cx="80"
-                      cy="80"
-                      r="64"
-                      className="stroke-stone-100 fill-none"
-                      strokeWidth="10"
-                    />
-                    {/* Active progress ring arc */}
-                    <circle
-                      cx="80"
-                      cy="80"
-                      r="64"
-                      className="stroke-sky-600 fill-none transition-all duration-1000 ease-out"
-                      strokeWidth="10"
-                      strokeDasharray={2 * Math.PI * 64}
-                      strokeDashoffset={2 * Math.PI * 64 - (predictionScorePercentageSum / 100) * (2 * Math.PI * 64)}
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                  {/* Central Text HUD */}
-                  <div className="absolute inset-0 flex flex-col items-center justify-center leading-none">
-                    <span className="text-3xl font-serif font-bold text-stone-850">
-                      {predictionScorePercentageSum}%
-                    </span>
-                    <span className="text-[9px] font-mono tracking-wider font-bold text-stone-400 uppercase mt-1">
-                      Accuracy Score
-                    </span>
+                {totalPredictionsSum === 0 ? (
+                  <div className="py-6 border border-dashed border-stone-200 rounded-2xl mb-6 bg-stone-50/50">
+                    <span className="text-3xl block mb-2">♟️</span>
+                    <h4 className="text-xs font-serif font-bold text-stone-700">No predictions recorded this game</h4>
+                    <p className="text-[10px] text-stone-505 max-w-[240px] mx-auto mt-1 leading-normal">
+                      Toggle <strong className="text-stone-600">Vs-Computer</strong> mode during your next match and tap anticipated moves in real-time to track metrics!
+                    </p>
                   </div>
-                </div>
+                ) : (
+                  <>
+                    {/* SVG Circular Progress Ring */}
+                    <div className="relative w-40 h-40 mx-auto mb-6 flex items-center justify-center">
+                      <svg className="w-full h-full transform -rotate-90">
+                        {/* Background circle */}
+                        <circle
+                          cx="80"
+                          cy="80"
+                          r="64"
+                          className="stroke-stone-100 fill-none"
+                          strokeWidth="10"
+                        />
+                        {/* Active progress ring arc */}
+                        <circle
+                          cx="80"
+                          cy="80"
+                          r="64"
+                          className="stroke-sky-600 fill-none transition-all duration-1000 ease-out"
+                          strokeWidth="10"
+                          strokeDasharray={2 * Math.PI * 64}
+                          strokeDashoffset={2 * Math.PI * 64 - (predictionScorePercentageSum / 100) * (2 * Math.PI * 64)}
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                      {/* Central Text HUD */}
+                      <div className="absolute inset-0 flex flex-col items-center justify-center leading-none">
+                        <span className="text-3xl font-serif font-bold text-stone-850">
+                          {predictionScorePercentageSum}%
+                        </span>
+                        <span className="text-[9px] font-mono tracking-wider font-bold text-stone-400 uppercase mt-1">
+                          Accuracy Score
+                        </span>
+                      </div>
+                    </div>
 
-                {/* Score formula visualization */}
-                <div className="mb-6">
-                  <div className="bg-stone-50 border border-stone-150 rounded-xl py-2 px-3 inline-flex items-center gap-2 text-xs text-stone-500 font-mono">
-                    <span className="text-[10px] uppercase font-bold text-stone-400">Score</span>
-                    <span className="text-stone-300">|</span>
-                    <span className="font-bold text-stone-700">
-                      ({totalPointsEarnedSum.toFixed(1)} / {totalPredictionsSum}) × 100%
-                    </span>
-                    <span>=</span>
-                    <span className="font-bold text-sky-700">{predictionScorePercentageSum}%</span>
-                  </div>
-                </div>
+                    {/* Score formula visualization */}
+                    <div className="mb-6">
+                      <div className="bg-stone-50 border border-stone-150 rounded-xl py-2 px-3 inline-flex items-center gap-2 text-xs text-stone-500 font-mono">
+                        <span className="text-[10px] uppercase font-bold text-stone-400">Score</span>
+                        <span className="text-stone-300">|</span>
+                        <span className="font-bold text-stone-700">
+                          ({totalPointsEarnedSum.toFixed(1)} / {totalPredictionsSum}) × 100%
+                        </span>
+                        <span>=</span>
+                        <span className="font-bold text-sky-700">{predictionScorePercentageSum}%</span>
+                      </div>
+                    </div>
 
-                {/* Feedback statement based on accuracy bracket */}
-                <div className="bg-sky-50/50 border border-sky-100/60 rounded-2xl p-4 mb-6">
-                  <p className="text-xs text-sky-900 leading-snug font-sans font-medium italic">
-                    &ldquo;{feedbackPhraseSum}&rdquo;
-                  </p>
-                </div>
+                    {/* Feedback statement based on accuracy bracket */}
+                    <div className="bg-sky-50/50 border border-sky-100/60 rounded-2xl p-4 mb-6">
+                      <p className="text-xs text-sky-900 leading-snug font-sans font-medium italic">
+                        &ldquo;{feedbackPhraseSum}&rdquo;
+                      </p>
+                    </div>
 
-                {/* Breakdown Grid stats */}
-                <div className="grid grid-cols-3 gap-2.5 mb-8">
-                  <div className="bg-white border border-stone-200 p-2.5 rounded-xl text-center">
-                    <span className="text-[9px] uppercase tracking-wider text-stone-400 font-mono font-bold block">Exact</span>
-                    <span className="text-sm font-serif font-bold text-emerald-600 block mt-1">{exactMatchesCountSum} Match{exactMatchesCountSum !== 1 ? 'es' : ''}</span>
-                    <span className="text-[8px] text-stone-400 font-mono font-semibold block mt-0.5">1.0 Pt / match</span>
-                  </div>
-                  <div className="bg-white border border-stone-200 p-2.5 rounded-xl text-center">
-                    <span className="text-[9px] uppercase tracking-wider text-stone-400 font-mono font-bold block">Partial</span>
-                    <span className="text-sm font-serif font-bold text-sky-600 block mt-1">{partialMatchesCountSum} Hit{partialMatchesCountSum !== 1 ? 's' : ''}</span>
-                    <span className="text-[8px] text-stone-400 font-mono font-semibold block mt-0.5">0.4 Pt / hit</span>
-                  </div>
-                  <div className="bg-white border border-stone-200 p-2.5 rounded-xl text-center">
-                    <span className="text-[9px] uppercase tracking-wider text-stone-400 font-mono font-bold block">Misses</span>
-                    <span className="text-sm font-serif font-bold text-stone-500 block mt-1">{missesCountSum} Miss{missesCountSum !== 1 ? 'es' : ''}</span>
-                    <span className="text-[8px] text-stone-400 font-mono font-semibold block mt-0.5">0.0 Pt / miss</span>
-                  </div>
-                </div>
+                    {/* Breakdown Grid stats */}
+                    <div className="grid grid-cols-3 gap-2.5 mb-8">
+                      <div className="bg-white border border-stone-200 p-2.5 rounded-xl text-center">
+                        <span className="text-[9px] uppercase tracking-wider text-stone-400 font-mono font-bold block">Exact</span>
+                        <span className="text-sm font-serif font-bold text-emerald-600 block mt-1">{exactMatchesCountSum} Match{exactMatchesCountSum !== 1 ? 'es' : ''}</span>
+                        <span className="text-[8px] text-stone-400 font-mono font-semibold block mt-0.5">1.0 Pt / match</span>
+                      </div>
+                      <div className="bg-white border border-stone-200 p-2.5 rounded-xl text-center">
+                        <span className="text-[9px] uppercase tracking-wider text-stone-400 font-mono font-bold block">Partial</span>
+                        <span className="text-sm font-serif font-bold text-sky-600 block mt-1">{partialMatchesCountSum} Hit{partialMatchesCountSum !== 1 ? 's' : ''}</span>
+                        <span className="text-[8px] text-stone-400 font-mono font-semibold block mt-0.5">0.4 Pt / hit</span>
+                      </div>
+                      <div className="bg-white border border-stone-200 p-2.5 rounded-xl text-center">
+                        <span className="text-[9px] uppercase tracking-wider text-stone-400 font-mono font-bold block">Misses</span>
+                        <span className="text-sm font-serif font-bold text-stone-500 block mt-1">{missesCountSum} Miss{missesCountSum !== 1 ? 'es' : ''}</span>
+                        <span className="text-[8px] text-stone-400 font-mono font-semibold block mt-0.5">0.0 Pt / miss</span>
+                      </div>
+                    </div>
+                  </>
+                )}
               </>
             )}
 
