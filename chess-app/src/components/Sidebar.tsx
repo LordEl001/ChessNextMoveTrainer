@@ -77,12 +77,12 @@ export default function Sidebar({
   const [copiedPGN, setCopiedPGN] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const moveLogEndRef = useRef<HTMLDivElement>(null);
+  const moveLogContainerRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll move log to bottom on live play
   useEffect(() => {
-    if (currentMoveIndex === -1 && moveLogEndRef.current) {
-      moveLogEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    if (currentMoveIndex === -1 && moveLogContainerRef.current) {
+      moveLogContainerRef.current.scrollTop = moveLogContainerRef.current.scrollHeight;
     }
   }, [moveHistory, currentMoveIndex]);
 
@@ -317,7 +317,7 @@ export default function Sidebar({
         {/* Dynamic Move Log Table */}
         <div>
           <label className="text-[11px] font-bold uppercase tracking-wider text-stone-500 block mb-2 font-mono">Move Log</label>
-          <div className="bg-stone-50 rounded-xl border border-stone-200 h-52 overflow-y-auto flex flex-col p-2.5">
+          <div ref={moveLogContainerRef} className="bg-stone-50 rounded-xl border border-stone-200 h-52 overflow-y-auto flex flex-col p-2.5">
             {groupedTurns.length === 0 ? (
               <div className="flex-1 flex flex-col items-center justify-center text-center p-4">
                 <Info className="w-5 h-5 text-stone-400 mb-1.5" />
@@ -368,7 +368,6 @@ export default function Sidebar({
                     </div>
                   );
                 })}
-                <div ref={moveLogEndRef} />
               </div>
             )}
           </div>
