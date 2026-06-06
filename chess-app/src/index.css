@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+@theme {
+  --color-natural-bg: #F5F2ED;
+  --color-natural-board-light: #E6E1D3;
+  --color-natural-board-dark: #7A7A5D;
+  --color-natural-accent: #5A5A40;
+  --color-natural-text: #2C2C24;
+  --color-natural-panel: #FFFFFF;
+  --font-serif: "Georgia", "Playfair Display", ui-serif, serif;
+  --font-sans: "Helvetica Neue", "Inter", Arial, sans-serif;
+}
+
