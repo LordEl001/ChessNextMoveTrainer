@@ -44,6 +44,8 @@ interface SidebarProps {
   onShowSummary?: () => void;
   isGameActive: boolean;
   onResign: () => void;
+  trainingColor?: 'white' | 'black';
+  onSetTrainingColor?: (color: 'white' | 'black') => void;
 }
 
 export default function Sidebar({
@@ -70,6 +72,8 @@ export default function Sidebar({
   onShowSummary,
   isGameActive,
   onResign,
+  trainingColor = 'white',
+  onSetTrainingColor,
 }: SidebarProps) {
 
   const [fenInput, setFenInput] = useState('');
@@ -207,6 +211,44 @@ export default function Sidebar({
             </button>
           </div>
 
+          {/* Training Color Selector if in Pass & Play mode */}
+          {gameMode === 'pass-and-play' && (
+            <div className="mt-3 bg-stone-50 p-3 rounded-lg border border-stone-200 animate-fade-in animate-duration-150">
+              <label className="text-[10px] font-bold uppercase tracking-wider text-stone-500 block mb-2 font-mono">Training Color Selection</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  id="predict-as-white"
+                  type="button"
+                  onClick={() => onSetTrainingColor?.('white')}
+                  className={`py-2 px-1.5 text-center text-xs font-bold rounded-lg border transition-all flex items-center justify-center gap-1.5 ${
+                    trainingColor === 'white'
+                      ? 'bg-white border-stone-900 text-stone-900 shadow-sm shadow-stone-200/50 outline-none ring-2 ring-stone-900/10'
+                      : 'bg-white border-stone-200 text-stone-500 hover:text-stone-800 hover:bg-stone-50'
+                  }`}
+                >
+                  <span className="text-xs">🤍</span>
+                  <span>Predict: White</span>
+                </button>
+                <button
+                  id="predict-as-black"
+                  type="button"
+                  onClick={() => onSetTrainingColor?.('black')}
+                  className={`py-2 px-1.5 text-center text-xs font-bold rounded-lg border transition-all flex items-center justify-center gap-1.5 ${
+                    trainingColor === 'black'
+                      ? 'bg-stone-950 border-stone-950 text-white shadow-md shadow-stone-950/20'
+                      : 'bg-white border-stone-200 text-stone-500 hover:text-stone-800 hover:bg-stone-50'
+                  }`}
+                >
+                  <span className="text-xs">🖤</span>
+                  <span>Predict: Black</span>
+                </button>
+              </div>
+              <div className="mt-2 text-[9px] text-stone-500 leading-normal font-sans">
+                Only the designated player predicts their opponent's next move.
+              </div>
+            </div>
+          )}
+
           {/* AI Difficulty Selector if in Computer mode */}
           {gameMode === 'vs-computer' && (
             <div className="mt-3 bg-stone-50 p-3 rounded-lg border border-stone-200 animate-fade-in animate-duration-150">
@@ -258,7 +300,7 @@ export default function Sidebar({
           )}
 
           {/* Prediction Analytics Block */}
-          {gameMode === 'vs-computer' && (() => {
+          {(gameMode === 'vs-computer' || gameMode === 'pass-and-play') && (() => {
             const totalPredictions = predictionRecords.length;
             const totalScore = predictionRecords.reduce((sum, rec) => sum + rec.scoreEarned, 0);
             const exactMatches = predictionRecords.filter(rec => rec.scoreEarned === 1.0).length;
