@@ -621,7 +621,7 @@ export default function App() {
       <div className="w-full max-w-7xl mx-auto px-4 md:px-6 lg:px-8 flex-1 flex flex-col lg:flex-row gap-6 items-stretch">
         
         {/* Chess Board Panel (Left Side on Desktop) */}
-        <div className="flex-1 flex flex-col gap-4 justify-center">
+        <div className="flex-none lg:flex-1 flex flex-col gap-4 justify-center">
           
           {/* Opponent Info Bar */}
           <PlayerBar
