@@ -190,8 +190,8 @@ export default function ChessBoard({
 
   return (
     <div className="relative w-full aspect-square bg-stone-900 rounded-lg shadow-2xl border-[12px] border-[#3d3d2e] overflow-hidden select-none" id="chessboard-container">
-      {/* 8x8 Grid */}
-      <div className="grid grid-cols-8 grid-rows-8 h-full w-full">
+      {/* 8x8 Grid with explicit dimensions and absolute layout to prevent aspect-ratio height clipping in Safari */}
+      <div className="absolute inset-0 grid grid-cols-8 grid-rows-[repeat(8,minmax(0,1fr))]">
         {ranks.map((rank) =>
           files.map((file) => {
             const squareSquare = `${file}${rank}`;
